@@ -11,6 +11,7 @@
 
 #define OVERHEAT_TEMPERATURE        255
 #define OVERHEAT_SAMPLES_THRESHOLD  10
+#define TC_FAULT_SAMPLES_THRESHOLD  5    // consecutive bad TC reads (~2.5s) -> safe abort
 #define PREPARE_TIME_MS             45000
 #define PREPARE_TEMPERATURE_CUTOFF  45
 #define TEMP_DELTA_PERIOD_S         3
@@ -83,9 +84,11 @@ int            reflow_get_current_profile_index();
 ReflowProfile* reflow_get_profile(int index);
 ProfileTimings reflow_get_profile_timings();
 int            reflow_get_profile_count();
-String         reflow_get_state_string();
+const char*    reflow_get_state_string();   // const literal — no per-call heap alloc
 bool           reflow_is_manual_heater_on(int heater_num);
 bool           isOverheat();
+bool           reflow_is_tc_fault();        // thermocouple disconnected / faulted
+String         reflow_get_fault_string();   // human-readable abort reason, "" if none
 double         reflow_get_pid_output();
 double         reflow_get_pid_kp();
 double         reflow_get_pid_ki();

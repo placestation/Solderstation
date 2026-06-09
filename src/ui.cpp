@@ -14,6 +14,7 @@ lv_obj_t* wifi_status;
 lv_obj_t* label_current_temp_val;
 lv_obj_t* label_target_temp_val;
 lv_obj_t* label_time_val;
+lv_obj_t* label_power_val;
 lv_obj_t* label_status_val;
 lv_obj_t* btn_start_stop;
 lv_obj_t* label_start_stop;
@@ -284,6 +285,9 @@ void create_status_card(lv_obj_t* parent) {
     label_time_val = lv_label_create(info_col);
     lv_obj_add_style(label_time_val, &style_text_label, LV_PART_MAIN);
 
+    label_power_val = lv_label_create(info_col);
+    lv_obj_add_style(label_power_val, &style_text_label, LV_PART_MAIN);
+
     status_badge = lv_obj_create(info_col);
     lv_obj_set_size(status_badge, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(status_badge, LV_RADIUS_CIRCLE, 0);
@@ -444,13 +448,15 @@ void show_overheat_message() {
     lv_obj_clean(screen);
 
     lv_obj_t* msgCard = create_card(screen);
-    lv_obj_t* msg = lv_label_create(msgCard);
-    lv_label_set_text(msg, "OVERHEAT");
-    lv_obj_set_style_text_font(msg, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_set_style_text_color(msg, COLOR_DESTRUCTIVE, LV_PART_MAIN);
+    lv_obj_t* title = lv_label_create(msgCard);
+    lv_label_set_text(title, LV_SYMBOL_WARNING " STOPPED");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, COLOR_DESTRUCTIVE, LV_PART_MAIN);
 
-    msg = lv_label_create(msgCard);
-    lv_label_set_text(msg, "Restart to clear the message.");
+    // Reason is set by the logic layer (overheat or thermocouple fault).
+    String reason = reflow_get_fault_string();
+    lv_obj_t* msg = lv_label_create(msgCard);
+    lv_label_set_text(msg, reason.length() ? reason.c_str() : "Restart to clear the message.");
     lv_obj_add_style(msg, &style_text_label, LV_PART_MAIN);
 }
 
@@ -601,10 +607,16 @@ void ui_update_values() {
     unsigned long time_s = reflow_get_elapsed_time();
     lv_label_set_text_fmt(label_time_val, "Time: %02lu:%02lu", time_s / 60, time_s % 60);
 
-    lv_label_set_text(label_status_val, reflow_get_state_string().c_str());
+    lv_label_set_text(label_status_val, reflow_get_state_string());
 
     // --- State-dependent UI ---
     ReflowState state = reflow_get_state();
+
+    // Live heater power (PID duty; full-on during the PREPARE warm-up)
+    int power_pct = (state == PREPARE)
+                    ? 100
+                    : (int)((reflow_get_pid_output() / 255.0) * 100.0 + 0.5);
+    lv_label_set_text_fmt(label_power_val, "Heater: %d%%", power_pct);
     if (state == IDLE) {
         lv_label_set_text(label_start_stop, "START");
         lv_obj_clear_state(btn_start_stop, LV_STATE_CHECKED);
