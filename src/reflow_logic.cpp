@@ -21,6 +21,7 @@ unsigned long lastTempRead     = 0;
 unsigned long elapsedTime      = 0UL;   // thermal-progress clock (ms), paced to the oven
 unsigned long pausedMs         = 0UL;   // total time the profile clock has been frozen
 unsigned long profilePaceLast  = 0UL;   // millis() at the last pacing update (0 = not started)
+bool          profileBaselineSet = false; // re-baseline ambient/timings when the profile actually starts
 
 uint8_t numOfOverheatSamples = 0;
 bool    flagIsOverheat       = false;
@@ -173,7 +174,27 @@ void updateTargetAndState() {
 
     unsigned long nowMs = millis();
 
-    if ((nowMs - prepareStartTime) > (unsigned)PREPARE_TIME_MS) {
+    // PREPARE ends on the timeout OR as soon as the oven reaches the warm-up
+    // cutoff — no point sitting (and overshooting) for the full timer once warm.
+    bool prepareDone = ((nowMs - prepareStartTime) > (unsigned)PREPARE_TIME_MS) ||
+                       (currentTemp >= PREPARE_TEMPERATURE_CUTOFF);
+
+    if (prepareDone) {
+        // Re-baseline to the ACTUAL temperature the instant the profile starts.
+        // After the PREPARE warm-up the oven is hotter than it was at the Start
+        // click, so the ramp must begin from here — otherwise the setpoint starts
+        // far below the real temperature, which looks like (and trips) a false
+        // thermal-runaway and shows a nonsensical target.
+        if (!profileBaselineSet) {
+            ambient            = currentTemp;
+            calculateProfileTimings();
+            elapsedTime        = 0;
+            pausedMs           = 0;
+            profilePaceLast    = 0;
+            profileBaselineSet = true;
+            if (callback_onUpdateCustomProfile) callback_onUpdateCustomProfile(); // redraw ideal curve
+        }
+
         // --- Temperature-gated profile clock ---------------------------------
         // Instead of advancing on wall-clock, advance a "thermal-progress" clock
         // that PAUSES while a heating ramp is lagging the setpoint. This keeps
@@ -447,6 +468,7 @@ void reflow_start_process() {
         elapsedTime       = 0;     // reset the temperature-gated profile clock
         pausedMs          = 0;
         profilePaceLast   = 0;
+        profileBaselineSet = false;
 
         if (currentTemp >= PREPARE_TEMPERATURE_CUTOFF) {
             // Oven is already warm (e.g. re-running back-to-back). The PREPARE
@@ -474,6 +496,7 @@ void reflow_stop_process() {
     elapsedTime       = 0;
     pausedMs          = 0;
     profilePaceLast   = 0;
+    profileBaselineSet = false;
     heater1_manual_on = false;
     heater2_manual_on = false;
     if (atRunning) {
