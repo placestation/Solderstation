@@ -328,6 +328,11 @@ void reflow_loop() {
 
 void reflow_start_process() {
     if (currentState == IDLE) {
+        // Safety net: can't run a profile if we're already above its soak temp
+        // (the ramp math would underflow). The UI blocks this with a friendly
+        // message; this guard also protects the web/API start path.
+        if (currentTemp >= profiles[currentProfileIndex].soakTemp) return;
+
         ambient = currentTemp;
         calculateProfileTimings();
         heater1_manual_on = false;
