@@ -18,6 +18,12 @@
 #define PROFILE_LAG_BAND_C          5.0    // pause profile clock if a ramp lags the setpoint by more than this (°C)
 #define MAX_PROFILE_PAUSE_MS        300000 // cap on total clock-freeze time (~5min) so a weak oven can't hang the run
 
+// --- Thermal-safety watchdog ---
+#define RUNAWAY_MARGIN_C            30.0   // temp this far ABOVE setpoint => stuck/runaway heater
+#define RUNAWAY_SAMPLES            6       // consecutive bad reads (~3s) before aborting
+#define HEAT_STALL_WINDOW_MS       60000   // window over which a heating phase must show progress
+#define HEAT_STALL_MIN_RISE_C      3.0     // min rise expected in that window while still far below target
+
 // --- PID Defaults (used if nothing saved in NVS) ---
 #define PID_KP        18.1215
 #define PID_KI        0.8171

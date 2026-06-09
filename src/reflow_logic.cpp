@@ -365,6 +365,53 @@ void reflow_init() {
     if (!isnan(t) && t > 0) currentTemp = t;
 }
 
+// Thermal-safety watchdog: catches a stuck/runaway heater (temperature well
+// above the setpoint) and a heating stall (commanding heat but the chamber
+// isn't getting hotter — dead element, failed-open SSR, or an open door). Either
+// aborts to a safe state and raises a fault, reusing the overheat/TC-fault path.
+void checkThermalSafety() {
+    static uint8_t       runawaySamples  = 0;
+    static unsigned long stallWindowMs   = 0;
+    static float         stallWindowTemp = 0.0;
+
+    bool heating = (currentState == PREHEAT || currentState == SOAK || currentState == REFLOW);
+    if (!heating) {
+        runawaySamples = 0;
+        stallWindowMs  = 0;
+        return;
+    }
+
+    // Runaway: temperature far above where it should be (e.g. welded-shut SSR).
+    if (currentTemp > targetTemp + RUNAWAY_MARGIN_C) {
+        if (++runawaySamples >= RUNAWAY_SAMPLES) {
+            faultReason = "THERMAL RUNAWAY\nHeater not responding — power cut.";
+            reflow_stop_process();
+            if (callback_onOverheating) callback_onOverheating();
+            return;
+        }
+    } else if (runawaySamples > 0) {
+        runawaySamples--;
+    }
+
+    // Heating stall: still far below target and barely rising over the window.
+    unsigned long now = millis();
+    if (stallWindowMs == 0) {
+        stallWindowMs   = now;
+        stallWindowTemp = currentTemp;
+    } else if (now - stallWindowMs >= HEAT_STALL_WINDOW_MS) {
+        bool farBelow = (targetTemp - currentTemp) > 10.0;
+        bool noRise   = (currentTemp - stallWindowTemp) < HEAT_STALL_MIN_RISE_C;
+        if (farBelow && noRise) {
+            faultReason = "HEATING FAULT\nNot heating — check element, SSR, door.";
+            reflow_stop_process();
+            if (callback_onOverheating) callback_onOverheating();
+            return;
+        }
+        stallWindowMs   = now;
+        stallWindowTemp = currentTemp;
+    }
+}
+
 void reflow_loop() {
     // Temp read gated to 500ms (MAX6675 limit)
     if (millis() - lastTempRead > 500) {
@@ -374,6 +421,7 @@ void reflow_loop() {
         } else {
             updateTargetAndState();
             updateHeaters();
+            checkThermalSafety();
         }
     }
 
