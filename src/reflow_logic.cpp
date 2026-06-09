@@ -18,10 +18,16 @@ bool heater1_manual_on         = false;
 bool heater2_manual_on         = false;
 int  currentProfileIndex       = 0;
 unsigned long lastTempRead     = 0;
-unsigned long elapsedTime      = 0UL;
+unsigned long elapsedTime      = 0UL;   // thermal-progress clock (ms), paced to the oven
+unsigned long pausedMs         = 0UL;   // total time the profile clock has been frozen
+unsigned long profilePaceLast  = 0UL;   // millis() at the last pacing update (0 = not started)
+bool          profileBaselineSet = false; // re-baseline ambient/timings when the profile actually starts
 
 uint8_t numOfOverheatSamples = 0;
 bool    flagIsOverheat       = false;
+uint8_t numOfTcFaultSamples  = 0;
+bool    flagIsTcFault        = false;
+static String faultReason    = "";   // set when an abort occurs; shown on the fault screen
 
 void (*callback_onOverheating)(void)         = nullptr;
 void (*callback_onUpdateCustomProfile)(void) = nullptr;
@@ -130,7 +136,23 @@ void updateTemperature() {
     }
 #else
     float temp = thermocouple.readCelsius();
-    if (!isnan(temp) && temp > 0) currentTemp = temp;
+    bool  bad  = isnan(temp) || temp <= 0.0;   // MAX6675 returns NaN on an open/disconnected probe
+    if (!bad) {
+        currentTemp = temp;
+        if (numOfTcFaultSamples > 0) numOfTcFaultSamples--;
+    } else {
+        numOfTcFaultSamples++;
+        // Don't blindly keep heating on a frozen reading. After a few bad
+        // samples assume the probe is gone and abort to a safe state.
+        if (numOfTcFaultSamples >= TC_FAULT_SAMPLES_THRESHOLD && !flagIsTcFault) {
+            flagIsTcFault = true;
+            faultReason   = "THERMOCOUPLE FAULT\nCheck the probe, then restart.";
+            reflow_stop_process();                 // heaters OFF, back to IDLE
+            if (callback_onOverheating) callback_onOverheating();
+            lastTempRead = millis();
+            return;
+        }
+    }
 #endif
     lastTempRead = millis();
 
@@ -138,6 +160,7 @@ void updateTemperature() {
         numOfOverheatSamples++;
         if (numOfOverheatSamples >= OVERHEAT_SAMPLES_THRESHOLD) {
             flagIsOverheat = true;
+            faultReason    = "OVERHEAT\nRestart to clear the message.";
             reflow_stop_process();
             if (callback_onOverheating) callback_onOverheating();
         }
@@ -149,9 +172,50 @@ void updateTemperature() {
 void updateTargetAndState() {
     if (currentState == IDLE || currentState == AUTOTUNE || processStartTime == 0) return;
 
-    if ((millis() - prepareStartTime) > (unsigned)PREPARE_TIME_MS) {
-        elapsedTime = (millis() - processStartTime) - (unsigned)PREPARE_TIME_MS;
-        targetTemp  = getTargetTemperature(elapsedTime);
+    unsigned long nowMs = millis();
+
+    // PREPARE ends on the timeout OR as soon as the oven reaches the warm-up
+    // cutoff — no point sitting (and overshooting) for the full timer once warm.
+    bool prepareDone = ((nowMs - prepareStartTime) > (unsigned)PREPARE_TIME_MS) ||
+                       (currentTemp >= PREPARE_TEMPERATURE_CUTOFF);
+
+    if (prepareDone) {
+        // Re-baseline to the ACTUAL temperature the instant the profile starts.
+        // After the PREPARE warm-up the oven is hotter than it was at the Start
+        // click, so the ramp must begin from here — otherwise the setpoint starts
+        // far below the real temperature, which looks like (and trips) a false
+        // thermal-runaway and shows a nonsensical target.
+        if (!profileBaselineSet) {
+            ambient            = currentTemp;
+            calculateProfileTimings();
+            elapsedTime        = 0;
+            pausedMs           = 0;
+            profilePaceLast    = 0;
+            profileBaselineSet = true;
+            if (callback_onUpdateCustomProfile) callback_onUpdateCustomProfile(); // redraw ideal curve
+        }
+
+        // --- Temperature-gated profile clock ---------------------------------
+        // Instead of advancing on wall-clock, advance a "thermal-progress" clock
+        // that PAUSES while a heating ramp is lagging the setpoint. This keeps
+        // the soak and reflow dwell times spent AT temperature on a slow oven,
+        // rather than being eaten up catching up. A capable oven never lags past
+        // the band, so it behaves exactly as before.
+        unsigned long dt = (profilePaceLast == 0) ? 0 : (nowMs - profilePaceLast);
+        profilePaceLast  = nowMs;
+
+        bool onRamp  = (elapsedTime < pTimes.preheat) ||
+                       (elapsedTime >= pTimes.soakEnd && elapsedTime < pTimes.reflowPeak);
+        bool lagging = onRamp &&
+                       (getTargetTemperature(elapsedTime) - currentTemp) > PROFILE_LAG_BAND_C;
+
+        if (lagging && pausedMs < (unsigned)MAX_PROFILE_PAUSE_MS) {
+            pausedMs += dt;        // hold the clock; let the oven catch up
+        } else {
+            elapsedTime += dt;     // advance (or proceed anyway once the cap is hit)
+        }
+
+        targetTemp = getTargetTemperature(elapsedTime);
 
         if      (elapsedTime < pTimes.preheat)    currentState = PREHEAT;
         else if (elapsedTime < pTimes.soakEnd)    currentState = SOAK;
@@ -167,8 +231,10 @@ void updateTargetAndState() {
             reflow_stop_process();
         }
     } else {
-        currentState = PREPARE;
-        targetTemp   = PREPARE_TEMPERATURE_CUTOFF;
+        currentState    = PREPARE;
+        targetTemp      = PREPARE_TEMPERATURE_CUTOFF;
+        elapsedTime     = 0;       // profile clock starts once PREPARE completes
+        profilePaceLast = 0;
     }
 }
 
@@ -181,9 +247,18 @@ void updateHeaters() {
         return;
     }
 
+    static bool pidWasActive = false;
+
     if (currentState == PREHEAT || currentState == SOAK || currentState == REFLOW) {
         pid_input    = currentTemp;
         pid_setpoint = targetTemp;
+        // On entry from the non-PID phases (PREPARE/IDLE) re-initialise the PID
+        // so the idle gap doesn't produce a derivative spike / integral carry-over.
+        if (!pidWasActive) {
+            reflowPID.SetMode(MANUAL);
+            reflowPID.SetMode(AUTOMATIC);
+            pidWasActive = true;
+        }
         reflowPID.Compute();
         unsigned long now = millis();
         if (now - pidWindowStart >= PID_WINDOW_MS) pidWindowStart = now;
@@ -192,14 +267,17 @@ void updateHeaters() {
         digitalWrite(SSR2_PIN, shouldHeat);
     }
     else if (currentState == PREPARE && currentTemp < PREPARE_TEMPERATURE_CUTOFF) {
+        pidWasActive = false;
         digitalWrite(SSR1_PIN, HIGH);
         digitalWrite(SSR2_PIN, HIGH);
     }
     else if (currentState == IDLE) {
+        pidWasActive = false;
         digitalWrite(SSR1_PIN, heater1_manual_on);
         digitalWrite(SSR2_PIN, heater2_manual_on);
     }
     else {
+        pidWasActive = false;
         digitalWrite(SSR1_PIN, LOW);
         digitalWrite(SSR2_PIN, LOW);
     }
@@ -308,6 +386,53 @@ void reflow_init() {
     if (!isnan(t) && t > 0) currentTemp = t;
 }
 
+// Thermal-safety watchdog: catches a stuck/runaway heater (temperature well
+// above the setpoint) and a heating stall (commanding heat but the chamber
+// isn't getting hotter — dead element, failed-open SSR, or an open door). Either
+// aborts to a safe state and raises a fault, reusing the overheat/TC-fault path.
+void checkThermalSafety() {
+    static uint8_t       runawaySamples  = 0;
+    static unsigned long stallWindowMs   = 0;
+    static float         stallWindowTemp = 0.0;
+
+    bool heating = (currentState == PREHEAT || currentState == SOAK || currentState == REFLOW);
+    if (!heating) {
+        runawaySamples = 0;
+        stallWindowMs  = 0;
+        return;
+    }
+
+    // Runaway: temperature far above where it should be (e.g. welded-shut SSR).
+    if (currentTemp > targetTemp + RUNAWAY_MARGIN_C) {
+        if (++runawaySamples >= RUNAWAY_SAMPLES) {
+            faultReason = "THERMAL RUNAWAY\nHeater not responding — power cut.";
+            reflow_stop_process();
+            if (callback_onOverheating) callback_onOverheating();
+            return;
+        }
+    } else if (runawaySamples > 0) {
+        runawaySamples--;
+    }
+
+    // Heating stall: still far below target and barely rising over the window.
+    unsigned long now = millis();
+    if (stallWindowMs == 0) {
+        stallWindowMs   = now;
+        stallWindowTemp = currentTemp;
+    } else if (now - stallWindowMs >= HEAT_STALL_WINDOW_MS) {
+        bool farBelow = (targetTemp - currentTemp) > 10.0;
+        bool noRise   = (currentTemp - stallWindowTemp) < HEAT_STALL_MIN_RISE_C;
+        if (farBelow && noRise) {
+            faultReason = "HEATING FAULT\nNot heating — check element, SSR, door.";
+            reflow_stop_process();
+            if (callback_onOverheating) callback_onOverheating();
+            return;
+        }
+        stallWindowMs   = now;
+        stallWindowTemp = currentTemp;
+    }
+}
+
 void reflow_loop() {
     // Temp read gated to 500ms (MAX6675 limit)
     if (millis() - lastTempRead > 500) {
@@ -317,6 +442,7 @@ void reflow_loop() {
         } else {
             updateTargetAndState();
             updateHeaters();
+            checkThermalSafety();
         }
     }
 
@@ -328,15 +454,36 @@ void reflow_loop() {
 
 void reflow_start_process() {
     if (currentState == IDLE) {
+        // Safety net: can't run a profile if we're already above its soak temp
+        // (the ramp math would underflow). The UI blocks this with a friendly
+        // message; this guard also protects the web/API start path.
+        if (currentTemp >= profiles[currentProfileIndex].soakTemp) return;
+
         ambient = currentTemp;
         calculateProfileTimings();
         heater1_manual_on = false;
         heater2_manual_on = false;
-        prepareStartTime  = millis();
-        processStartTime  = prepareStartTime;
         pidWindowStart    = millis();
         pid_output        = 0;
-        currentState      = PREPARE;
+        elapsedTime       = 0;     // reset the temperature-gated profile clock
+        pausedMs          = 0;
+        profilePaceLast   = 0;
+        profileBaselineSet = false;
+
+        if (currentTemp >= PREPARE_TEMPERATURE_CUTOFF) {
+            // Oven is already warm (e.g. re-running back-to-back). The PREPARE
+            // warm-up would just sit idle for PREPARE_TIME_MS with the heaters
+            // off, looking like it never started. Skip it: backdate the timers
+            // by PREPARE_TIME_MS so updateTargetAndState() sees the prepare
+            // window as already elapsed and begins the profile immediately.
+            prepareStartTime  = millis() - PREPARE_TIME_MS;
+            processStartTime  = prepareStartTime;
+            currentState      = PREHEAT;
+        } else {
+            prepareStartTime  = millis();
+            processStartTime  = prepareStartTime;
+            currentState      = PREPARE;
+        }
     }
 }
 
@@ -346,6 +493,10 @@ void reflow_stop_process() {
     processStartTime  = 0;
     targetTemp        = 25.0;
     pid_output        = 0;
+    elapsedTime       = 0;
+    pausedMs          = 0;
+    profilePaceLast   = 0;
+    profileBaselineSet = false;
     heater1_manual_on = false;
     heater2_manual_on = false;
     if (atRunning) {
@@ -432,6 +583,8 @@ int            reflow_get_current_profile_index() { return currentProfileIndex; 
 int            reflow_get_profile_count()         { return PROFILE_COUNT; }
 ProfileTimings reflow_get_profile_timings()       { return pTimes; }
 bool           isOverheat()                       { return flagIsOverheat; }
+bool           reflow_is_tc_fault()               { return flagIsTcFault; }
+String         reflow_get_fault_string()          { return faultReason; }
 bool           reflow_is_autotuning()             { return atRunning; }
 String         reflow_get_autotune_status()       { return at_status; }
 double         reflow_get_autotune_kp()           { return at_kp; }
@@ -448,7 +601,7 @@ ReflowProfile* reflow_get_profile(int index) {
     return nullptr;
 }
 
-String reflow_get_state_string() {
+const char* reflow_get_state_string() {
     switch (currentState) {
         case IDLE:     return "Idle";
         case PREPARE:  return "Preparing";

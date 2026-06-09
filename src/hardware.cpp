@@ -5,7 +5,7 @@
 
 void initI2C() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(100000);
+    Wire.setClock(400000);   // 400 kHz (was 100 kHz) — faster touch polling, snappier buttons
     delay(50);
 }
 

@@ -502,13 +502,16 @@ const char ROOT_HTML[] PROGMEM = R"=====(
 void handleRoot() { server.send(200, "text/html", ROOT_HTML); }
 
 void handleData() {
-    String json = "{";
+    String json;
+    json.reserve(1024);   // avoid repeated reallocations while building the response
+    json = "{";
     json += "\"temp\":"           + String(reflow_get_current_temp())                      + ",";
     json += "\"targetTemp\":"     + String(reflow_get_target_temp())                       + ",";
     json += "\"elapsedTime\":"    + String(reflow_get_elapsed_time())                      + ",";
     json += "\"pidOutput\":"      + String(reflow_get_pid_output())                        + ",";
     json += "\"isOverheat\":"     + String(isOverheat() ? "true" : "false")                + ",";
-    json += "\"state\":\""        + reflow_get_state_string()                              + "\",";
+    json += "\"tcFault\":"        + String(reflow_is_tc_fault() ? "true" : "false")        + ",";
+    json += String("\"state\":\"") + reflow_get_state_string()                             + "\",";
     json += "\"currentProfile\":" + String(reflow_get_current_profile_index())             + ",";
     json += "\"idealProfile\":"   + reflow_get_ideal_profile_points()                      + ",";
     json += "\"heater1_on\":"     + String(reflow_is_manual_heater_on(1) ? "true":"false") + ",";
