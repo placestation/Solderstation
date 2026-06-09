@@ -12,7 +12,11 @@ lv_color_t lvgl_buf2[screenWidth * LVGL_BUFFER_LINES];
 
 void initDisplay() {
     Serial.println("Initializing display...");
-    tft.begin();
+    // Run the SPI bus at 80 MHz (Arduino_GFX default is 40 MHz). This roughly
+    // halves the time to push a frame to the ST7796 — the single biggest win
+    // for scroll smoothness and chart repaint. If the panel shows artifacts
+    // (snow, torn pixels) on your wiring, step down to 60000000 or 40000000.
+    tft.begin(80000000);
     tft.invertDisplay(false);
     tft.fillScreen(0x0000);
     delay(120);

@@ -67,5 +67,5 @@ void loop() {
     reflow_loop();
     web_server_loop();
 
-    delay(2); // for stability
+    delay(1); // yield to RTOS; lower than before to keep up with the faster refresh/touch cadence
 }
