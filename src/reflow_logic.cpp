@@ -22,6 +22,9 @@ unsigned long elapsedTime      = 0UL;
 
 uint8_t numOfOverheatSamples = 0;
 bool    flagIsOverheat       = false;
+uint8_t numOfTcFaultSamples  = 0;
+bool    flagIsTcFault        = false;
+static String faultReason    = "";   // set when an abort occurs; shown on the fault screen
 
 void (*callback_onOverheating)(void)         = nullptr;
 void (*callback_onUpdateCustomProfile)(void) = nullptr;
@@ -130,7 +133,23 @@ void updateTemperature() {
     }
 #else
     float temp = thermocouple.readCelsius();
-    if (!isnan(temp) && temp > 0) currentTemp = temp;
+    bool  bad  = isnan(temp) || temp <= 0.0;   // MAX6675 returns NaN on an open/disconnected probe
+    if (!bad) {
+        currentTemp = temp;
+        if (numOfTcFaultSamples > 0) numOfTcFaultSamples--;
+    } else {
+        numOfTcFaultSamples++;
+        // Don't blindly keep heating on a frozen reading. After a few bad
+        // samples assume the probe is gone and abort to a safe state.
+        if (numOfTcFaultSamples >= TC_FAULT_SAMPLES_THRESHOLD && !flagIsTcFault) {
+            flagIsTcFault = true;
+            faultReason   = "THERMOCOUPLE FAULT\nCheck the probe, then restart.";
+            reflow_stop_process();                 // heaters OFF, back to IDLE
+            if (callback_onOverheating) callback_onOverheating();
+            lastTempRead = millis();
+            return;
+        }
+    }
 #endif
     lastTempRead = millis();
 
@@ -138,6 +157,7 @@ void updateTemperature() {
         numOfOverheatSamples++;
         if (numOfOverheatSamples >= OVERHEAT_SAMPLES_THRESHOLD) {
             flagIsOverheat = true;
+            faultReason    = "OVERHEAT\nRestart to clear the message.";
             reflow_stop_process();
             if (callback_onOverheating) callback_onOverheating();
         }
@@ -181,9 +201,18 @@ void updateHeaters() {
         return;
     }
 
+    static bool pidWasActive = false;
+
     if (currentState == PREHEAT || currentState == SOAK || currentState == REFLOW) {
         pid_input    = currentTemp;
         pid_setpoint = targetTemp;
+        // On entry from the non-PID phases (PREPARE/IDLE) re-initialise the PID
+        // so the idle gap doesn't produce a derivative spike / integral carry-over.
+        if (!pidWasActive) {
+            reflowPID.SetMode(MANUAL);
+            reflowPID.SetMode(AUTOMATIC);
+            pidWasActive = true;
+        }
         reflowPID.Compute();
         unsigned long now = millis();
         if (now - pidWindowStart >= PID_WINDOW_MS) pidWindowStart = now;
@@ -192,14 +221,17 @@ void updateHeaters() {
         digitalWrite(SSR2_PIN, shouldHeat);
     }
     else if (currentState == PREPARE && currentTemp < PREPARE_TEMPERATURE_CUTOFF) {
+        pidWasActive = false;
         digitalWrite(SSR1_PIN, HIGH);
         digitalWrite(SSR2_PIN, HIGH);
     }
     else if (currentState == IDLE) {
+        pidWasActive = false;
         digitalWrite(SSR1_PIN, heater1_manual_on);
         digitalWrite(SSR2_PIN, heater2_manual_on);
     }
     else {
+        pidWasActive = false;
         digitalWrite(SSR1_PIN, LOW);
         digitalWrite(SSR2_PIN, LOW);
     }
@@ -449,6 +481,8 @@ int            reflow_get_current_profile_index() { return currentProfileIndex; 
 int            reflow_get_profile_count()         { return PROFILE_COUNT; }
 ProfileTimings reflow_get_profile_timings()       { return pTimes; }
 bool           isOverheat()                       { return flagIsOverheat; }
+bool           reflow_is_tc_fault()               { return flagIsTcFault; }
+String         reflow_get_fault_string()          { return faultReason; }
 bool           reflow_is_autotuning()             { return atRunning; }
 String         reflow_get_autotune_status()       { return at_status; }
 double         reflow_get_autotune_kp()           { return at_kp; }
@@ -465,7 +499,7 @@ ReflowProfile* reflow_get_profile(int index) {
     return nullptr;
 }
 
-String reflow_get_state_string() {
+const char* reflow_get_state_string() {
     switch (currentState) {
         case IDLE:     return "Idle";
         case PREPARE:  return "Preparing";
