@@ -28,9 +28,7 @@ lv_obj_t* btn_heat_bottom;
 lv_obj_t* profile_selector_card;
 lv_obj_t *profile_selector;
 
-static uint16_t sampledTicks = 0;
-static unsigned long nowTimeMs = 0;
-static unsigned long prevTimeMs = 0;
+static int lastChartSec = -1;   // last profile-second index plotted on the actual curve
 
 static lv_obj_t* status_badge;
 static uint8_t prevProfileIndex = 255; // default invalid value
@@ -626,8 +624,7 @@ void ui_update_values() {
         lv_obj_clear_state(btn_heat_bottom,     LV_STATE_DISABLED);
         lv_obj_clear_state(btn_heat_all,        LV_STATE_DISABLED);
         lv_chart_set_all_value(chart, series_actual, LV_CHART_POINT_NONE);
-        sampledTicks = 0;
-        prevTimeMs   = 0;
+        lastChartSec = -1;
     }
     else {
         lv_label_set_text(label_start_stop, "STOP");
@@ -638,14 +635,19 @@ void ui_update_values() {
         lv_obj_add_state(btn_heat_bottom,     LV_STATE_DISABLED);
         lv_obj_add_state(btn_heat_all,        LV_STATE_DISABLED);
 
-        if (sampledTicks >= CHART_MAX_X_VALUE) reflow_stop_process();
-
-        nowTimeMs = millis();
-        if (state != PREPARE && nowTimeMs - prevTimeMs >= 1000 && sampledTicks < CHART_MAX_X_VALUE) {
-            series_actual->y_points[sampledTicks] = (int16_t)min((int)reflow_get_current_temp(), CHART_MAX_Y_VALUE);
-            sampledTicks++;
-            prevTimeMs = nowTimeMs;
-            lv_chart_refresh(chart);
+        // Sample the actual-temperature curve indexed by PROFILE seconds (the
+        // temperature-gated clock) so it stays aligned with the ideal curve.
+        // While the profile clock is paused the x-index doesn't advance, so the
+        // two curves never drift apart. (Completion is driven by the profile
+        // clock in reflow logic, not by the chart anymore.)
+        if (state != PREPARE) {
+            int ps = (int)reflow_get_elapsed_time();   // profile seconds
+            if (ps != lastChartSec && ps >= 0 && ps < CHART_MAX_X_VALUE) {
+                series_actual->y_points[ps] =
+                    (int16_t)min((int)reflow_get_current_temp(), CHART_MAX_Y_VALUE);
+                lastChartSec = ps;
+                lv_chart_refresh(chart);
+            }
         }
     }
 
