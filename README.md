@@ -1,43 +1,25 @@
-# Waveshare35TDemo
-Demo of the Waveshare 3.5" touch screen device. This demo allow you to 
-access all the LVGL demos and includes a flag to change the device orientation to landscape.
+# Solderstation
 
-You can buy it with my referral link: [Waveshare 3.5" Touch Screen](https://www.waveshare.com/esp32-s3-touch-lcd-3.5b.htm?&aff_id=117711)
+An open-source reflow oven controller.
 
-<img src="https://www.waveshare.com/media/catalog/product/cache/1/image/560x560/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-s3-touch-lcd-3.5b-1.jpg" width="400" style="margin:-50px;">
+The firmware in this repository runs on an ESP32-S3 with a 3.5" touch display
+(PlatformIO + Arduino framework + LVGL): PID temperature control, selectable
+reflow profiles, a live temperature graph, manual heater control, and a WiFi
+web interface.
 
-## LVGL Setup Instructions
+## Buy one
 
-To use the built-in examples and demos of LVGL;
-1) Expand folder `.pio/libdeps/Waveshare-S3-35/lvgl`
-2) Move the `lvgl/demos` folder to `lvgl/src/demos`
-3) Open file `lvgl/src/demos/widgets/lv_demo_widgets.h`
-4) Replace the line:
-   ```cpp     
-   #include "../../src/draw/lv_draw.h"   
-   ```
-   with:
-   ```cpp
-   #include "../../../src/draw/lv_draw.h"
-   ```
-5) Replace the line:
-   ```cpp
-   #include "../../src/draw/lv_draw_triangle.h"
-   ```
-   with:
-   ```cpp
-   #include "../../../src/draw/lv_draw_triangle.h"
-   ```
+You can purchase the reflow oven here:
+**https://www.placestation.in/products/reflow-oven?variant=55802498679153**
 
-## Configuration Options
+## Build & flash
 
-Uncomment `LANDSCAPE_MODE` to enable landscape mode (default is portrait mode)
+This is a [PlatformIO](https://platformio.org/) project.
 
-## Pin outs
+```bash
+pio run                 # build
+pio run -t upload       # flash to the board
+pio device monitor      # serial console (115200 baud)
+```
 
-<img src="https://www.waveshare.com/img/devkit/ESP32-S3-Touch-LCD-3.5B/ESP32-S3-Touch-LCD-3.5B-details-intro.jpg" width="400">
-
-
-
-
-
+Target environment: `esp32s3_devkit` (see `platformio.ini`).
