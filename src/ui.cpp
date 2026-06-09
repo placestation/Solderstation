@@ -529,7 +529,7 @@ void show_boot_screen() {
     lv_obj_clear_flag(box_r, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* name = lv_label_create(scr);
-    lv_label_set_text(name, "Solderstation");
+    lv_label_set_text(name, "placestation.in");
     lv_obj_set_style_text_font(name, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(name, lv_color_hex(0x1c1c1e), 0);
     lv_obj_set_pos(name, 0, box_by + gap_v + arm_v + 30);
