@@ -11,9 +11,18 @@
 
 #define OVERHEAT_TEMPERATURE        255
 #define OVERHEAT_SAMPLES_THRESHOLD  10
+#define TC_FAULT_SAMPLES_THRESHOLD  5    // consecutive bad TC reads (~2.5s) -> safe abort
 #define PREPARE_TIME_MS             45000
 #define PREPARE_TEMPERATURE_CUTOFF  45
 #define TEMP_DELTA_PERIOD_S         3
+#define PROFILE_LAG_BAND_C          5.0    // pause profile clock if a ramp lags the setpoint by more than this (°C)
+#define MAX_PROFILE_PAUSE_MS        300000 // cap on total clock-freeze time (~5min) so a weak oven can't hang the run
+
+// --- Thermal-safety watchdog ---
+#define RUNAWAY_MARGIN_C            30.0   // temp this far ABOVE setpoint => stuck/runaway heater
+#define RUNAWAY_SAMPLES            6       // consecutive bad reads (~3s) before aborting
+#define HEAT_STALL_WINDOW_MS       60000   // window over which a heating phase must show progress
+#define HEAT_STALL_MIN_RISE_C      3.0     // min rise expected in that window while still far below target
 
 // --- PID Defaults (used if nothing saved in NVS) ---
 #define PID_KP        18.1215
@@ -83,9 +92,11 @@ int            reflow_get_current_profile_index();
 ReflowProfile* reflow_get_profile(int index);
 ProfileTimings reflow_get_profile_timings();
 int            reflow_get_profile_count();
-String         reflow_get_state_string();
+const char*    reflow_get_state_string();   // const literal — no per-call heap alloc
 bool           reflow_is_manual_heater_on(int heater_num);
 bool           isOverheat();
+bool           reflow_is_tc_fault();        // thermocouple disconnected / faulted
+String         reflow_get_fault_string();   // human-readable abort reason, "" if none
 double         reflow_get_pid_output();
 double         reflow_get_pid_kp();
 double         reflow_get_pid_ki();

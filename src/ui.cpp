@@ -14,11 +14,11 @@ lv_obj_t* wifi_status;
 lv_obj_t* label_current_temp_val;
 lv_obj_t* label_target_temp_val;
 lv_obj_t* label_time_val;
+lv_obj_t* label_power_val;
 lv_obj_t* label_status_val;
 lv_obj_t* btn_start_stop;
 lv_obj_t* label_start_stop;
 lv_obj_t* chart;
-lv_obj_t* chart_ideal;
 lv_chart_series_t* series_actual;
 lv_chart_series_t* series_ideal;
 lv_obj_t* manual_control_card;
@@ -28,9 +28,7 @@ lv_obj_t* btn_heat_bottom;
 lv_obj_t* profile_selector_card;
 lv_obj_t *profile_selector;
 
-static uint16_t sampledTicks = 0;
-static unsigned long nowTimeMs = 0;
-static unsigned long prevTimeMs = 0;
+static int lastChartSec = -1;   // last profile-second index plotted on the actual curve
 
 static lv_obj_t* status_badge;
 static uint8_t prevProfileIndex = 255; // default invalid value
@@ -44,10 +42,23 @@ char temp_str[10];
 
 // --- Forward Declarations ---
 static void ui_draw_ideal_profile_chart();
+static void show_too_hot_message(int currentT, int coolBelow);
 
 // --- Event Handlers ---
 static void start_stop_event_handler(lv_event_t* e) {
     if (reflow_get_state() == IDLE) {
+        // Refuse to start if the oven is still above the profile's soak temp:
+        // the profile timing assumes it starts below that, and physically you
+        // can't "ramp up" to a temperature you're already past.
+        ReflowProfile* p = reflow_get_profile(reflow_get_current_profile_index());
+        int curT = (int)reflow_get_current_temp();
+        if (p && curT >= (int)p->soakTemp) {
+            show_too_hot_message(curT, (int)p->soakTemp);
+            // Un-press the START toggle so the UI reflects that we didn't start.
+            lv_obj_clear_state(btn_start_stop, LV_STATE_CHECKED);
+            lv_label_set_text(label_start_stop, "START");
+            return;
+        }
         reflow_start_process();
         ui_draw_ideal_profile_chart();
     } else {
@@ -178,6 +189,58 @@ static void wifi_reset_btn_handler(lv_event_t* e) {
     lv_obj_add_event_cb(btn_yes, wifi_reset_confirm_handler, LV_EVENT_CLICKED, NULL);
 }
 
+static lv_obj_t* too_hot_mbox = nullptr;
+
+static void too_hot_dismiss_handler(lv_event_t* e) {
+    if (too_hot_mbox) {
+        lv_obj_del(too_hot_mbox);
+        too_hot_mbox = nullptr;
+        lv_obj_clear_flag(lv_layer_top(), LV_OBJ_FLAG_CLICKABLE);
+    }
+}
+
+// Cheeky "let it cool" popup shown when Start is pressed with a too-hot oven.
+static void show_too_hot_message(int currentT, int coolBelow) {
+    if (too_hot_mbox) return;
+
+    too_hot_mbox = lv_obj_create(lv_layer_top());
+    lv_obj_add_flag(lv_layer_top(), LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(too_hot_mbox, 280, 200);
+    lv_obj_center(too_hot_mbox);
+    lv_obj_set_style_radius(too_hot_mbox, 12, 0);
+    lv_obj_set_style_pad_all(too_hot_mbox, 16, 0);
+    lv_obj_set_flex_flow(too_hot_mbox, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(too_hot_mbox, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_border_width(too_hot_mbox, 0, 0);
+    lv_obj_set_style_shadow_width(too_hot_mbox, 20, 0);
+    lv_obj_clear_flag(too_hot_mbox, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* title = lv_label_create(too_hot_mbox);
+    lv_label_set_text(title, LV_SYMBOL_WARNING "  Whoa, hotshot!");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(title, COLOR_DESTRUCTIVE, 0);
+    lv_obj_set_style_pad_bottom(title, 8, 0);
+
+    lv_obj_t* msg = lv_label_create(too_hot_mbox);
+    lv_label_set_text_fmt(msg,
+        "Oven's still %d°C - way too toasty\nto start over. Go grab a coffee\nand let it cool below %d°C first.",
+        currentT, coolBelow);
+    lv_obj_set_style_text_font(msg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(msg, lv_color_hex(0x8e8e93), 0);
+    lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_bottom(msg, 16, 0);
+
+    lv_obj_t* btn_ok = lv_btn_create(too_hot_mbox);
+    lv_obj_set_size(btn_ok, 140, 40);
+    lv_obj_set_style_radius(btn_ok, 8, 0);
+    lv_obj_set_style_shadow_width(btn_ok, 0, 0);
+    lv_obj_add_event_cb(btn_ok, too_hot_dismiss_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl_ok = lv_label_create(btn_ok);
+    lv_label_set_text(lbl_ok, "Fine, I'll wait");
+    lv_obj_set_style_text_color(lbl_ok, lv_color_white(), 0);
+    lv_obj_center(lbl_ok);
+}
+
 void create_status_card(lv_obj_t* parent) {
     lv_obj_t* card = create_card(parent);
     lv_obj_set_layout(card, LV_LAYOUT_FLEX);
@@ -219,6 +282,9 @@ void create_status_card(lv_obj_t* parent) {
 
     label_time_val = lv_label_create(info_col);
     lv_obj_add_style(label_time_val, &style_text_label, LV_PART_MAIN);
+
+    label_power_val = lv_label_create(info_col);
+    lv_obj_add_style(label_power_val, &style_text_label, LV_PART_MAIN);
 
     status_badge = lv_obj_create(info_col);
     lv_obj_set_size(status_badge, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -279,7 +345,7 @@ void create_chart_card(lv_obj_t* parent) {
     chart = lv_chart_create(card);
     lv_obj_set_size(chart, 220, 180);
     lv_obj_set_pos(chart, 40, 32);
-    lv_chart_set_type(chart, LV_CHART_TYPE_SCATTER);
+    lv_chart_set_type(chart, LV_CHART_TYPE_LINE);   // was SCATTER — data is written by index, LINE renders the same far cheaper
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
     lv_chart_set_point_count(chart, CHART_MAX_X_VALUE);
     lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 10, 5, 7, 1, true, 30);
@@ -290,28 +356,15 @@ void create_chart_card(lv_obj_t* parent) {
     lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);
     series_actual = lv_chart_add_series(chart, COLOR_DESTRUCTIVE, LV_CHART_AXIS_PRIMARY_Y);
 
-    for (uint16_t i = 0; i < CHART_MAX_X_VALUE; i++) {
-        lv_chart_set_next_value2(chart, series_actual, i, 0);
-    }
+    // Start empty (no flat zero-line on boot); samples are filled in live.
+    lv_chart_set_all_value(chart, series_actual, LV_CHART_POINT_NONE);
 
-    chart_ideal = lv_chart_create(card);
-    lv_obj_set_size(chart_ideal, 220, 180);
-    lv_obj_set_pos(chart_ideal, 40, 32);
-    lv_chart_set_type(chart_ideal, LV_CHART_TYPE_LINE);
-    lv_chart_set_point_count(chart_ideal, CHART_MAX_X_VALUE);
-    lv_chart_set_range(chart_ideal, LV_CHART_AXIS_PRIMARY_Y, 0, CHART_MAX_Y_VALUE);
-    lv_obj_set_style_bg_opa(chart_ideal, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(chart_ideal, 0, 0);
-    lv_obj_set_style_pad_all(chart_ideal, 0, 0);
-    lv_obj_set_style_size(chart_ideal, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_line_width(chart_ideal, 3, LV_PART_MAIN);
-    lv_chart_set_axis_tick(chart_ideal, LV_CHART_AXIS_PRIMARY_X, 0, 0, 0, 0, false, 0);
-    lv_chart_set_axis_tick(chart_ideal, LV_CHART_AXIS_PRIMARY_Y, 0, 0, 0, 0, false, 0);
-    series_ideal = lv_chart_add_series(chart_ideal, COLOR_PRIMARY, LV_CHART_AXIS_PRIMARY_Y);
-
-    for (uint16_t i = 0; i < CHART_MAX_X_VALUE; i++) {
-        series_ideal->y_points[i] = LV_CHART_POINT_NONE;
-    }
+    // Ideal profile is a SECOND series on the SAME chart. Previously it was a
+    // separate chart object stacked on top, which forced BOTH charts to repaint
+    // on every update/scroll. One chart, two series = half the draw work and a
+    // single shared set of axes.
+    series_ideal = lv_chart_add_series(chart, COLOR_PRIMARY, LV_CHART_AXIS_PRIMARY_Y);
+    lv_chart_set_all_value(chart, series_ideal, LV_CHART_POINT_NONE);
 }
 
 void create_manual_control_card(lv_obj_t* parent) {
@@ -393,13 +446,15 @@ void show_overheat_message() {
     lv_obj_clean(screen);
 
     lv_obj_t* msgCard = create_card(screen);
-    lv_obj_t* msg = lv_label_create(msgCard);
-    lv_label_set_text(msg, "OVERHEAT");
-    lv_obj_set_style_text_font(msg, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_set_style_text_color(msg, COLOR_DESTRUCTIVE, LV_PART_MAIN);
+    lv_obj_t* title = lv_label_create(msgCard);
+    lv_label_set_text(title, LV_SYMBOL_WARNING " STOPPED");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, COLOR_DESTRUCTIVE, LV_PART_MAIN);
 
-    msg = lv_label_create(msgCard);
-    lv_label_set_text(msg, "Restart to clear the message.");
+    // Reason is set by the logic layer (overheat or thermocouple fault).
+    String reason = reflow_get_fault_string();
+    lv_obj_t* msg = lv_label_create(msgCard);
+    lv_label_set_text(msg, reason.length() ? reason.c_str() : "Restart to clear the message.");
     lv_obj_add_style(msg, &style_text_label, LV_PART_MAIN);
 }
 
@@ -474,7 +529,7 @@ void show_boot_screen() {
     lv_obj_clear_flag(box_r, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* name = lv_label_create(scr);
-    lv_label_set_text(name, "Solderstation");
+    lv_label_set_text(name, "placestation.in");
     lv_obj_set_style_text_font(name, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(name, lv_color_hex(0x1c1c1e), 0);
     lv_obj_set_pos(name, 0, box_by + gap_v + arm_v + 30);
@@ -509,18 +564,15 @@ void create_ui() {
     onUpdateCustomProfile(ui_draw_ideal_profile_chart);
     onOverheating(show_overheat_message);
 
+    // Single refresh timer. (Previously two were created here — the first was
+    // leaked and never deleted, so ui_update_values ran twice per period and
+    // show_overheat_message's lv_timer_del only stopped one of them.)
     timerUiRefresh = lv_timer_create(ui_update_timer_cb, 500, NULL);
     lv_timer_ready(timerUiRefresh);
+
+    ui_update_values();   // populate labels immediately
 
     // Force full render then turn backlight on — clean transition, no flicker
-    lv_refr_now(NULL);
-    digitalWrite(TFT_BL, HIGH);
-
-    timerUiRefresh = lv_timer_create(ui_update_timer_cb, 500, NULL);
-    lv_timer_ready(timerUiRefresh);
-
-    ui_update_values();   // ← add this, populate labels immediately
-
     lv_refr_now(NULL);
     digitalWrite(TFT_BL, HIGH);
 }
@@ -553,10 +605,16 @@ void ui_update_values() {
     unsigned long time_s = reflow_get_elapsed_time();
     lv_label_set_text_fmt(label_time_val, "Time: %02lu:%02lu", time_s / 60, time_s % 60);
 
-    lv_label_set_text(label_status_val, reflow_get_state_string().c_str());
+    lv_label_set_text(label_status_val, reflow_get_state_string());
 
     // --- State-dependent UI ---
     ReflowState state = reflow_get_state();
+
+    // Live heater power (PID duty; full-on during the PREPARE warm-up)
+    int power_pct = (state == PREPARE)
+                    ? 100
+                    : (int)((reflow_get_pid_output() / 255.0) * 100.0 + 0.5);
+    lv_label_set_text_fmt(label_power_val, "Heater: %d%%", power_pct);
     if (state == IDLE) {
         lv_label_set_text(label_start_stop, "START");
         lv_obj_clear_state(btn_start_stop, LV_STATE_CHECKED);
@@ -566,8 +624,7 @@ void ui_update_values() {
         lv_obj_clear_state(btn_heat_bottom,     LV_STATE_DISABLED);
         lv_obj_clear_state(btn_heat_all,        LV_STATE_DISABLED);
         lv_chart_set_all_value(chart, series_actual, LV_CHART_POINT_NONE);
-        sampledTicks = 0;
-        prevTimeMs   = 0;
+        lastChartSec = -1;
     }
     else {
         lv_label_set_text(label_start_stop, "STOP");
@@ -578,14 +635,19 @@ void ui_update_values() {
         lv_obj_add_state(btn_heat_bottom,     LV_STATE_DISABLED);
         lv_obj_add_state(btn_heat_all,        LV_STATE_DISABLED);
 
-        if (sampledTicks >= CHART_MAX_X_VALUE) reflow_stop_process();
-
-        nowTimeMs = millis();
-        if (state != PREPARE && nowTimeMs - prevTimeMs >= 1000 && sampledTicks < CHART_MAX_X_VALUE) {
-            series_actual->y_points[sampledTicks] = (int16_t)min((int)reflow_get_current_temp(), CHART_MAX_Y_VALUE);
-            sampledTicks++;
-            prevTimeMs = nowTimeMs;
-            lv_chart_refresh(chart);
+        // Sample the actual-temperature curve indexed by PROFILE seconds (the
+        // temperature-gated clock) so it stays aligned with the ideal curve.
+        // While the profile clock is paused the x-index doesn't advance, so the
+        // two curves never drift apart. (Completion is driven by the profile
+        // clock in reflow logic, not by the chart anymore.)
+        if (state != PREPARE) {
+            int ps = (int)reflow_get_elapsed_time();   // profile seconds
+            if (ps != lastChartSec && ps >= 0 && ps < CHART_MAX_X_VALUE) {
+                series_actual->y_points[ps] =
+                    (int16_t)min((int)reflow_get_current_temp(), CHART_MAX_Y_VALUE);
+                lastChartSec = ps;
+                lv_chart_refresh(chart);
+            }
         }
     }
 
@@ -636,5 +698,5 @@ void ui_draw_ideal_profile_chart() {
         }
     }
 
-    lv_chart_refresh(chart_ideal);
+    lv_chart_refresh(chart);
 }

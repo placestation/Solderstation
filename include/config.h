@@ -42,7 +42,7 @@ extern const char* WIFI_PASSWORD;
 // --- Screen & LVGL Settings ---
 static const uint16_t screenWidth  = 320;
 static const uint16_t screenHeight = 480;
-#define LVGL_BUFFER_LINES 40
+#define LVGL_BUFFER_LINES 60   // larger draw buffer → fewer SPI flush round-trips (was 40)
 #define LVGL_TICK_PERIOD_MS 5
 
 #endif
