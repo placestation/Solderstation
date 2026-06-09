@@ -332,11 +332,23 @@ void reflow_start_process() {
         calculateProfileTimings();
         heater1_manual_on = false;
         heater2_manual_on = false;
-        prepareStartTime  = millis();
-        processStartTime  = prepareStartTime;
         pidWindowStart    = millis();
         pid_output        = 0;
-        currentState      = PREPARE;
+
+        if (currentTemp >= PREPARE_TEMPERATURE_CUTOFF) {
+            // Oven is already warm (e.g. re-running back-to-back). The PREPARE
+            // warm-up would just sit idle for PREPARE_TIME_MS with the heaters
+            // off, looking like it never started. Skip it: backdate the timers
+            // by PREPARE_TIME_MS so updateTargetAndState() sees the prepare
+            // window as already elapsed and begins the profile immediately.
+            prepareStartTime  = millis() - PREPARE_TIME_MS;
+            processStartTime  = prepareStartTime;
+            currentState      = PREHEAT;
+        } else {
+            prepareStartTime  = millis();
+            processStartTime  = prepareStartTime;
+            currentState      = PREPARE;
+        }
     }
 }
 

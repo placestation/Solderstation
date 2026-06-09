@@ -279,7 +279,7 @@ void create_chart_card(lv_obj_t* parent) {
     chart = lv_chart_create(card);
     lv_obj_set_size(chart, 220, 180);
     lv_obj_set_pos(chart, 40, 32);
-    lv_chart_set_type(chart, LV_CHART_TYPE_SCATTER);
+    lv_chart_set_type(chart, LV_CHART_TYPE_LINE);   // was SCATTER — data is written by index, LINE renders the same far cheaper
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
     lv_chart_set_point_count(chart, CHART_MAX_X_VALUE);
     lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 10, 5, 7, 1, true, 30);
@@ -290,9 +290,8 @@ void create_chart_card(lv_obj_t* parent) {
     lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);
     series_actual = lv_chart_add_series(chart, COLOR_DESTRUCTIVE, LV_CHART_AXIS_PRIMARY_Y);
 
-    for (uint16_t i = 0; i < CHART_MAX_X_VALUE; i++) {
-        lv_chart_set_next_value2(chart, series_actual, i, 0);
-    }
+    // Start empty (no flat zero-line on boot); samples are filled in live.
+    lv_chart_set_all_value(chart, series_actual, LV_CHART_POINT_NONE);
 
     chart_ideal = lv_chart_create(card);
     lv_obj_set_size(chart_ideal, 220, 180);
