@@ -15,6 +15,8 @@
 #define PREPARE_TIME_MS             45000
 #define PREPARE_TEMPERATURE_CUTOFF  45
 #define TEMP_DELTA_PERIOD_S         3
+#define PROFILE_LAG_BAND_C          5.0    // pause profile clock if a ramp lags the setpoint by more than this (°C)
+#define MAX_PROFILE_PAUSE_MS        300000 // cap on total clock-freeze time (~5min) so a weak oven can't hang the run
 
 // --- PID Defaults (used if nothing saved in NVS) ---
 #define PID_KP        18.1215

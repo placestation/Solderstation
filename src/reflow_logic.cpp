@@ -18,7 +18,9 @@ bool heater1_manual_on         = false;
 bool heater2_manual_on         = false;
 int  currentProfileIndex       = 0;
 unsigned long lastTempRead     = 0;
-unsigned long elapsedTime      = 0UL;
+unsigned long elapsedTime      = 0UL;   // thermal-progress clock (ms), paced to the oven
+unsigned long pausedMs         = 0UL;   // total time the profile clock has been frozen
+unsigned long profilePaceLast  = 0UL;   // millis() at the last pacing update (0 = not started)
 
 uint8_t numOfOverheatSamples = 0;
 bool    flagIsOverheat       = false;
@@ -169,9 +171,30 @@ void updateTemperature() {
 void updateTargetAndState() {
     if (currentState == IDLE || currentState == AUTOTUNE || processStartTime == 0) return;
 
-    if ((millis() - prepareStartTime) > (unsigned)PREPARE_TIME_MS) {
-        elapsedTime = (millis() - processStartTime) - (unsigned)PREPARE_TIME_MS;
-        targetTemp  = getTargetTemperature(elapsedTime);
+    unsigned long nowMs = millis();
+
+    if ((nowMs - prepareStartTime) > (unsigned)PREPARE_TIME_MS) {
+        // --- Temperature-gated profile clock ---------------------------------
+        // Instead of advancing on wall-clock, advance a "thermal-progress" clock
+        // that PAUSES while a heating ramp is lagging the setpoint. This keeps
+        // the soak and reflow dwell times spent AT temperature on a slow oven,
+        // rather than being eaten up catching up. A capable oven never lags past
+        // the band, so it behaves exactly as before.
+        unsigned long dt = (profilePaceLast == 0) ? 0 : (nowMs - profilePaceLast);
+        profilePaceLast  = nowMs;
+
+        bool onRamp  = (elapsedTime < pTimes.preheat) ||
+                       (elapsedTime >= pTimes.soakEnd && elapsedTime < pTimes.reflowPeak);
+        bool lagging = onRamp &&
+                       (getTargetTemperature(elapsedTime) - currentTemp) > PROFILE_LAG_BAND_C;
+
+        if (lagging && pausedMs < (unsigned)MAX_PROFILE_PAUSE_MS) {
+            pausedMs += dt;        // hold the clock; let the oven catch up
+        } else {
+            elapsedTime += dt;     // advance (or proceed anyway once the cap is hit)
+        }
+
+        targetTemp = getTargetTemperature(elapsedTime);
 
         if      (elapsedTime < pTimes.preheat)    currentState = PREHEAT;
         else if (elapsedTime < pTimes.soakEnd)    currentState = SOAK;
@@ -187,8 +210,10 @@ void updateTargetAndState() {
             reflow_stop_process();
         }
     } else {
-        currentState = PREPARE;
-        targetTemp   = PREPARE_TEMPERATURE_CUTOFF;
+        currentState    = PREPARE;
+        targetTemp      = PREPARE_TEMPERATURE_CUTOFF;
+        elapsedTime     = 0;       // profile clock starts once PREPARE completes
+        profilePaceLast = 0;
     }
 }
 
@@ -371,6 +396,9 @@ void reflow_start_process() {
         heater2_manual_on = false;
         pidWindowStart    = millis();
         pid_output        = 0;
+        elapsedTime       = 0;     // reset the temperature-gated profile clock
+        pausedMs          = 0;
+        profilePaceLast   = 0;
 
         if (currentTemp >= PREPARE_TEMPERATURE_CUTOFF) {
             // Oven is already warm (e.g. re-running back-to-back). The PREPARE
@@ -395,6 +423,9 @@ void reflow_stop_process() {
     processStartTime  = 0;
     targetTemp        = 25.0;
     pid_output        = 0;
+    elapsedTime       = 0;
+    pausedMs          = 0;
+    profilePaceLast   = 0;
     heater1_manual_on = false;
     heater2_manual_on = false;
     if (atRunning) {
