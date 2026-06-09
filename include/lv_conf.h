@@ -88,7 +88,18 @@
  *====================*/
 
 /** Default display refresh, input device read and animation step period. */
-#define LV_DEF_REFR_PERIOD  16      /**< [ms] ~60fps; also the touch-read period (was 33 = 30fps) */
+#define LV_DEF_REFR_PERIOD  16      /**< [ms] (v9 name) */
+
+/* NOTE: platformio.ini pins LVGL 8.3.11, which reads the macros BELOW — not the
+ * v9-style LV_DEF_REFR_PERIOD above. Without these it silently used the 30ms
+ * (30fps) defaults, which is why the display never felt smooth. */
+#define LV_DISP_DEF_REFR_PERIOD   16   /* ~60 fps display refresh (was 30) */
+#define LV_INDEV_DEF_READ_PERIOD  10   /* poll touch every 10ms — snappier input */
+
+/* Cache the card drop-shadow mask instead of re-blurring it every frame.
+ * All cards share the same shadow params so one cached mask serves all of them.
+ * Default is 0 (no cache) = major scroll-jank source. ~size^2 bytes RAM. */
+#define LV_SHADOW_CACHE_SIZE      40
 
 /** Default Dots Per Inch. Used to initialize default sizes such as widgets sized, style paddings.
  * (Not so important, you can adjust it to modify default sizes and spaces.) */
