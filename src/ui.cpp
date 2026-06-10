@@ -14,7 +14,6 @@ lv_obj_t* wifi_status;
 lv_obj_t* label_current_temp_val;
 lv_obj_t* label_target_temp_val;
 lv_obj_t* label_time_val;
-lv_obj_t* label_power_val;
 lv_obj_t* label_status_val;
 lv_obj_t* btn_start_stop;
 lv_obj_t* label_start_stop;
@@ -283,19 +282,19 @@ void create_status_card(lv_obj_t* parent) {
     label_time_val = lv_label_create(info_col);
     lv_obj_add_style(label_time_val, &style_text_label, LV_PART_MAIN);
 
-    label_power_val = lv_label_create(info_col);
-    lv_obj_add_style(label_power_val, &style_text_label, LV_PART_MAIN);
-
+    // Status pill — colour set per state in ui_update_values()
     status_badge = lv_obj_create(info_col);
     lv_obj_set_size(status_badge, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(status_badge, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(status_badge, lv_color_hex(0xf2f2f7), 0);
-    lv_obj_set_style_pad_hor(status_badge, 10, 0);
-    lv_obj_set_style_pad_ver(status_badge, 4, 0);
-    lv_obj_set_style_pad_top(status_badge, 4, 0);
+    lv_obj_set_style_bg_color(status_badge, COLOR_HIGHLIGHT, 0);
+    lv_obj_set_style_border_width(status_badge, 0, 0);
+    lv_obj_set_style_pad_hor(status_badge, 12, 0);
+    lv_obj_set_style_pad_ver(status_badge, 5, 0);
+    lv_obj_clear_flag(status_badge, LV_OBJ_FLAG_SCROLLABLE);
 
     label_status_val = lv_label_create(status_badge);
     lv_obj_add_style(label_status_val, &style_text_label, 0);
+    lv_obj_set_style_text_color(label_status_val, COLOR_TEXT_SEC, 0);
     lv_obj_center(label_status_val);
 
     // Right column
@@ -310,11 +309,16 @@ void create_status_card(lv_obj_t* parent) {
 
     btn_start_stop = lv_btn_create(right_col);
     lv_obj_set_size(btn_start_stop, 100, 60);
+    lv_obj_set_style_radius(btn_start_stop, 14, 0);
+    lv_obj_set_style_bg_color(btn_start_stop, COLOR_PRIMARY, 0);          // blue START
+    lv_obj_set_style_bg_color(btn_start_stop, COLOR_DESTRUCTIVE, LV_STATE_CHECKED); // red STOP
+    lv_obj_set_style_shadow_width(btn_start_stop, 0, 0);
     lv_obj_add_event_cb(btn_start_stop, start_stop_event_handler, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_flag(btn_start_stop, LV_OBJ_FLAG_CHECKABLE);
     label_start_stop = lv_label_create(btn_start_stop);
     lv_label_set_text(label_start_stop, "START");
-    lv_obj_set_style_text_font(label_start_stop, &lv_font_montserrat_24, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(label_start_stop, &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(label_start_stop, lv_color_white(), 0);
     lv_obj_center(label_start_stop);
 
     // WiFi reset button
@@ -329,7 +333,6 @@ void create_status_card(lv_obj_t* parent) {
     lv_label_set_text(lbl_wifi_reset, "WiFi Reset");
     lv_obj_center(lbl_wifi_reset);
     lv_obj_add_event_cb(btn_wifi_reset, wifi_reset_btn_handler, LV_EVENT_CLICKED, NULL);
-    Serial.println("DEBUG: WiFi Reset button created and event registered");
 }
 
 void create_chart_card(lv_obj_t* parent) {
@@ -337,6 +340,7 @@ void create_chart_card(lv_obj_t* parent) {
     lv_obj_add_style(card, &style_card, 0);
     lv_obj_set_width(card, LV_PCT(100));
     lv_obj_set_height(card, 280);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);   // whole block static — no panning the graph
 
     lv_obj_t* title = lv_label_create(card);
     lv_obj_add_style(title, &style_title, 0);
@@ -345,6 +349,7 @@ void create_chart_card(lv_obj_t* parent) {
     chart = lv_chart_create(card);
     lv_obj_set_size(chart, 220, 180);
     lv_obj_set_pos(chart, 40, 32);
+    lv_obj_clear_flag(chart, LV_OBJ_FLAG_SCROLLABLE);   // static — don't let the graph be dragged/panned
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);   // was SCATTER — data is written by index, LINE renders the same far cheaper
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
     lv_chart_set_point_count(chart, CHART_MAX_X_VALUE);
@@ -382,8 +387,10 @@ void create_manual_control_card(lv_obj_t* parent) {
     lv_obj_set_style_pad_row(btn_cont, 8, 0);
 
     btn_heat_all = lv_btn_create(btn_cont);
+    lv_obj_add_style(btn_heat_all, &style_btn_primary, LV_PART_MAIN);
     lv_obj_set_width(btn_heat_all, LV_PCT(100));
     lv_obj_set_height(btn_heat_all, 50);
+    lv_obj_set_style_shadow_width(btn_heat_all, 0, 0);
     lv_obj_add_event_cb(btn_heat_all, manual_heat_event_handler, LV_EVENT_CLICKED, NULL);
     lv_obj_t* label_all = lv_label_create(btn_heat_all);
     lv_label_set_text(label_all, "Heat All");
@@ -426,12 +433,29 @@ void create_profile_selector_card(lv_obj_t* parent) {
     lv_btnmatrix_set_map(profile_selector, profile_map);
     lv_btnmatrix_set_one_checked(profile_selector, true);
 
-    lv_obj_add_style(profile_selector, &style_btn_primary, LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(profile_selector, COLOR_SUCCESS, LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_height(profile_selector, 80, 0);
-    lv_obj_set_style_pad_gap(profile_selector, 2, 0);
-    lv_obj_set_style_pad_all(profile_selector, 0, 0);
-    lv_obj_set_style_border_width(profile_selector, 0, 0);
+    // iOS-style segmented control: light grey track, transparent inactive
+    // segments, white "lifted" active segment.
+    lv_obj_set_style_height(profile_selector, 44, 0);
+    lv_obj_set_style_bg_color(profile_selector, COLOR_HIGHLIGHT, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(profile_selector, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(profile_selector, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(profile_selector, 3, LV_PART_MAIN);
+    lv_obj_set_style_pad_gap(profile_selector, 3, LV_PART_MAIN);
+    lv_obj_set_style_border_width(profile_selector, 0, LV_PART_MAIN);
+
+    // Inactive segments
+    lv_obj_set_style_bg_opa(profile_selector, LV_OPA_TRANSP, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(profile_selector, COLOR_TEXT_SEC, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(profile_selector, &lv_font_montserrat_14, LV_PART_ITEMS);
+    lv_obj_set_style_radius(profile_selector, 8, LV_PART_ITEMS);
+
+    // Active segment — white card with primary text and a soft shadow
+    lv_obj_set_style_bg_opa(profile_selector, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(profile_selector, COLOR_CARD, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(profile_selector, COLOR_TEXT_PRI, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_shadow_width(profile_selector, 6, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_shadow_opa(profile_selector, LV_OPA_20, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_shadow_ofs_y(profile_selector, 1, LV_PART_ITEMS | LV_STATE_CHECKED);
 
     lv_btnmatrix_set_btn_ctrl_all(profile_selector, LV_BTNMATRIX_CTRL_CHECKABLE);
     lv_btnmatrix_set_selected_btn(profile_selector, reflow_get_current_profile_index());
@@ -610,11 +634,10 @@ void ui_update_values() {
     // --- State-dependent UI ---
     ReflowState state = reflow_get_state();
 
-    // Live heater power (PID duty; full-on during the PREPARE warm-up)
-    int power_pct = (state == PREPARE)
-                    ? 100
-                    : (int)((reflow_get_pid_output() / 255.0) * 100.0 + 0.5);
-    lv_label_set_text_fmt(label_power_val, "Heater: %d%%", power_pct);
+    // Status pill colour: green tint while a cycle is running, grey when idle
+    bool running = (state != IDLE);
+    lv_obj_set_style_bg_color(status_badge, running ? COLOR_SUCCESS_BG : COLOR_HIGHLIGHT, 0);
+    lv_obj_set_style_text_color(label_status_val, running ? COLOR_SUCCESS : COLOR_TEXT_SEC, 0);
     if (state == IDLE) {
         lv_label_set_text(label_start_stop, "START");
         lv_obj_clear_state(btn_start_stop, LV_STATE_CHECKED);
